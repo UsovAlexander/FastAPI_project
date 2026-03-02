@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
+# Создание таблиц
 Base.metadata.create_all(bind=engine)
 
 scheduler = BackgroundScheduler()
@@ -45,7 +46,7 @@ async def lifespan(app: FastAPI):
     Lifespan контекстный менеджер для управления ресурсами при старте и остановке
     """
     try:
-        redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
+        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
         redis_client = redis.from_url(
             redis_url,
             encoding="utf8",
@@ -88,9 +89,11 @@ app.include_router(links.router)
 
 @app.get("/")
 async def root():
+    base_url = os.getenv("BASE_URL", "http://localhost:8000")
     return {
         "message": "URL Shortener Service",
         "version": "1.0.0",
+        "base_url": base_url,
         "endpoints": {
             "docs": "/docs",
             "redoc": "/redoc",
@@ -108,3 +111,8 @@ async def root():
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run("app.main:app", host="0.0.0.0", port=port, reload=False)
