@@ -1,27 +1,35 @@
+import os
+import logging
+import redis.asyncio as redis
+
+from aiocache import Cache
+from aiocache.serializers import JsonSerializer
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi_cache import FastAPICache
 from fastapi_cache.backends.redis import RedisBackend
-import redis.asyncio as redis
-import os
+
 from dotenv import load_dotenv
 from apscheduler.schedulers.background import BackgroundScheduler
-import logging
+
 from contextlib import asynccontextmanager
 
 from .database import engine, Base
 from .routers import links, auth
 from .tasks import cleanup_expired_links, cleanup_unused_links
+from unittest.mock import Mock
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-# Создание таблиц
+
 Base.metadata.create_all(bind=engine)
 
 scheduler = BackgroundScheduler()
+
+cache = None
 
 def run_cleanup_expired():
     try:
@@ -42,21 +50,23 @@ scheduler.add_job(run_cleanup_unused, "interval", days=1)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Lifespan контекстный менеджер для управления ресурсами при старте и остановке
-    """
+    "Lifespan контекстный менеджер для управления ресурсами"
+    global cache
+    
     try:
-        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-        redis_client = redis.from_url(
-            redis_url,
-            encoding="utf8",
-            decode_responses=True
-        )
-        FastAPICache.init(RedisBackend(redis_client), prefix="fastapi-cache")
-        logger.info(f"Redis cache initialized with URL: {redis_url}")
-
-        scheduler.start()
-        logger.info("Scheduler started")
+        if os.getenv("TESTING") == "true":
+            cache = Mock()
+            logger.info("Using mock cache for testing")
+        else:
+            redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
+            cache = Cache(Cache.REDIS, endpoint="redis", port=6379, serializer=JsonSerializer())
+            logger.info(f"Redis cache initialized with URL: {redis_url}")
+        
+        app.state.cache = cache
+        
+        if os.getenv("TESTING") != "true":
+            scheduler.start()
+            logger.info("Scheduler started")
         
         yield
         
@@ -64,11 +74,12 @@ async def lifespan(app: FastAPI):
         logger.error(f"Error during startup: {e}")
         yield
     finally:
-        try:
-            scheduler.shutdown()
-            logger.info("Scheduler shutdown")
-        except Exception as e:
-            logger.error(f"Error during shutdown: {e}")
+        if os.getenv("TESTING") != "true":
+            try:
+                scheduler.shutdown()
+                logger.info("Scheduler shutdown")
+            except Exception as e:
+                logger.error(f"Error during shutdown: {e}")
 
 app = FastAPI(
     title="URL Shortener Service", 

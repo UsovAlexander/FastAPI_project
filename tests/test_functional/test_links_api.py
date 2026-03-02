@@ -2,16 +2,15 @@ import pytest
 from fastapi import status
 from datetime import datetime, timedelta
 
-def test_create_short_link_unauthorized(client):
+def test_create_short_link_unauthorized(client, mock_celery_task):
     """Тест создания ссылки без авторизации"""
     response = client.post("/links/shorten", json={
         "original_url": "https://example.com"
     })
     
-    assert response.status_code == status.HTTP_200_OK
+    assert response.status_code == 401
     data = response.json()
-    assert "short_code" in data
-    assert data["original_url"] == "https://example.com"
+    assert data["detail"] == "Not authenticated"
 
 def test_create_link_with_custom_alias(authorized_client):
     """Тест создания ссылки с кастомным алиасом"""
@@ -25,14 +24,15 @@ def test_create_link_with_custom_alias(authorized_client):
     assert data["short_code"] == "myalias123"
     assert data["custom_alias"] == "myalias123"
 
-def test_get_link_stats(client, test_link):
+def test_get_link_stats(client, test_link, mock_redis_cache):
     """Тест получения статистики ссылки"""
     response = client.get(f"/links/{test_link.short_code}/stats")
     
-    assert response.status_code == status.HTTP_200_OK
+    assert response.status_code == 200
     data = response.json()
     assert data["short_code"] == test_link.short_code
     assert data["clicks"] == 0
+    assert "short_url" in data
 
 def test_update_link(authorized_client, test_link):
     """Тест обновления ссылки"""

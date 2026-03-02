@@ -1,13 +1,16 @@
 import pytest
 import os
+import sys
+import asyncio
+import kombu
+
+from unittest.mock import Mock, patch
+from celery import Celery
+from celery.app import app_or_default
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from fastapi.testclient import TestClient
-import sys
-import sys
-import os
-from unittest.mock import Mock, patch
-import asyncio
+
 
 os.environ["TESTING"] = "true"
 
@@ -128,15 +131,34 @@ def authorized_client(client, user_token):
 @pytest.fixture
 def mock_redis_cache():
     """Мок для Redis кэша"""
-    with patch('app.routers.links.cached') as mock_cache:
-        mock_cache.return_value = lambda x: x
-        yield mock_cache
+    with patch('app.routers.links.cached') as mock_cached:
+        mock_cached.return_value = lambda x: x
+        yield mock_cached
+
+@pytest.fixture(autouse=True)
+def mock_cache_init():
+    """Мок для инициализации кэша"""
+    with patch('app.main.FastAPICache.init') as mock_init:
+        mock_init.return_value = None
+        yield mock_init
+
+@pytest.fixture(autouse=True)
+def mock_redis_and_celery(monkeypatch):
+    """Глобальный мок для Redis и Celery во всех тестах"""
+    mock_connection = Mock()
+    mock_connection.ensure_connection = Mock()
+
+    monkeypatch.setattr(kombu, "Connection", lambda *args, **kwargs: mock_connection)
+
+    monkeypatch.setattr("app.celery_app.celery_app", Mock())
+    monkeypatch.setattr("app.tasks.celery_app", Mock())
 
 @pytest.fixture
 def mock_celery_task():
-    """Мок для Celery задач"""
+    """Улучшенный мок для Celery задач"""
     with patch('app.routers.links.increment_click_count') as mock_task:
         mock_task.delay = Mock(return_value=None)
+        mock_task.apply_async = Mock()
         yield mock_task
 
 @pytest.fixture(scope="session")
@@ -145,3 +167,17 @@ def event_loop():
     loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop
     loop.close()
+
+@pytest.fixture(autouse=True)
+def mock_aiocache(monkeypatch):
+    """Глобальный мок для aiocache во всех тестах"""
+    mock_cached = Mock()
+    mock_cached.return_value = lambda f: f 
+
+    monkeypatch.setattr("aiocache.cached", mock_cached)
+
+    mock_serializer = Mock()
+    monkeypatch.setattr("aiocache.serializers.JsonSerializer", lambda: mock_serializer)
+    
+    yield mock_cached
+

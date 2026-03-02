@@ -37,7 +37,7 @@
     ```
 
 4. **Работа с тестами:**
- - Запуск
+ - Запуск pytest
     ```bash
     coverage run -m pytest tests/ -v
     ```
@@ -49,3 +49,8 @@
     ```bash
     coverage html && open htmlcov/index.html
     ```
+
+ - Запуск locust для тестов под нагрузкой
+   ```bash
+   locust -f tests/locustfile.py --host=http://localhost:8000
+   ```

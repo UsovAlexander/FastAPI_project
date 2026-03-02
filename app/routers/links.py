@@ -1,15 +1,18 @@
+import logging
+import urllib.parse 
+import random
+import string
+
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from datetime import datetime
-import random
-import string
 from typing import Optional
 from fastapi_cache import FastAPICache
 from fastapi_cache.decorator import cache
-import logging
-import urllib.parse 
+from aiocache import cached
+from aiocache.serializers import JsonSerializer
 from ..database import get_db
 from ..models import Link, User
 from ..schemas import LinkCreate, LinkResponse, LinkUpdate, LinkStats
@@ -201,7 +204,7 @@ async def update_link(
     return link
 
 @router.get("/{short_code}/stats", response_model=LinkStats)
-@cache(expire=60)
+@cached(ttl=60, serializer=JsonSerializer())
 async def get_link_stats(
     short_code: str,
     db: Session = Depends(get_db)

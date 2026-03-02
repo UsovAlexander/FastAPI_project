@@ -39,7 +39,7 @@ class URLShortenerUser(HttpUser):
     def access_link(self):
         """Переход по короткой ссылке"""
         short_code = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
-        self.client.get(f"/{short_code}", name="/[short_code]", allow_redirects=False)
+        self.client.get(f"/links/{short_code}", name="/[short_code]", allow_redirects=False)
     
     @task(1)
     def get_stats(self):
