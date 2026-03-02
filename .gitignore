@@ -5,3 +5,4 @@ venv*
 celerybeat-schedule
 .coverage
 test.db
+.pytest_cache
