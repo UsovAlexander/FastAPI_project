@@ -11,18 +11,16 @@ from ..database import get_db
 from ..models import User
 from ..schemas import UserCreate, UserResponse, Token
 
-# Конфигурация
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-here")
+
+SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
-# Настройки безопасности
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 router = APIRouter(tags=["authentication"])
 
-# Вспомогательные функции
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 
@@ -63,11 +61,9 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
         raise credentials_exception
     return user
 
-# Эндпоинты
 @router.post("/register", response_model=UserResponse)
 async def register(user_data: UserCreate, db: Session = Depends(get_db)):
     """Регистрация нового пользователя"""
-    # Проверка существующего пользователя
     existing_user = db.query(User).filter(
         (User.email == user_data.email) | (User.username == user_data.username)
     ).first()
@@ -77,8 +73,7 @@ async def register(user_data: UserCreate, db: Session = Depends(get_db)):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="User with this email or username already exists"
         )
-    
-    # Создание нового пользователя
+
     hashed_password = get_password_hash(user_data.password)
     db_user = User(
         email=user_data.email,
