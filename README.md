@@ -14,3 +14,24 @@
     
     pip install -r requirements.txt
     ```
+
+3. **Работа с контейнером:**
+
+ - Cоберите с очисткой кэша
+    ```bash
+    docker-compose build --no-cache
+    ```
+
+ - Запустите
+    ```bash
+    docker-compose up -d
+    ```
+
+ - Проверьте логи
+    ```bash
+    docker-compose logs -f web
+    ```
+ - Остановите контейнеры
+    ```bash
+    docker-compose down
+    ```
