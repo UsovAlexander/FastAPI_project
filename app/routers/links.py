@@ -9,7 +9,7 @@ from typing import Optional
 from fastapi_cache import FastAPICache
 from fastapi_cache.decorator import cache
 import logging
-
+import urllib.parse 
 from ..database import get_db
 from ..models import Link, User
 from ..schemas import LinkCreate, LinkResponse, LinkUpdate, LinkStats
@@ -23,6 +23,32 @@ def generate_short_code(length: int = 6) -> str:
     """Генерация уникального короткого кода"""
     chars = string.ascii_letters + string.digits
     return ''.join(random.choice(chars) for _ in range(length))
+
+@router.get("/search", response_model=list[LinkResponse])
+async def search_by_original_url(
+    original_url: str = Query(..., description="Original URL to search"),
+    db: Session = Depends(get_db)
+):
+    """Поиск ссылок по оригинальному URL"""
+    decoded_url = urllib.parse.unquote(original_url)
+    
+    logger.info(f"Searching for URL: {original_url}")
+    logger.info(f"Decoded URL: {decoded_url}")
+    
+    links = db.query(Link).filter(
+        (Link.original_url == original_url) | 
+        (Link.original_url.contains(decoded_url)) |
+        (Link.original_url == decoded_url),
+        Link.is_active == True
+    ).all()
+    
+    logger.info(f"Found {len(links)} links")
+    
+    if not links:
+        all_links = db.query(Link).filter(Link.is_active == True).all()
+        logger.info(f"All active links in DB: {[l.original_url for l in all_links]}")
+    
+    return links
 
 @router.post("/shorten", response_model=LinkResponse)
 async def create_short_link(
@@ -208,16 +234,3 @@ async def get_link_stats(
     }
     
     return stats_data
-
-@router.get("/search", response_model=list[LinkResponse])
-async def search_by_original_url(
-    original_url: str = Query(..., description="Original URL to search"),
-    db: Session = Depends(get_db)
-):
-    """Поиск ссылок по оригинальному URL"""
-    links = db.query(Link).filter(
-        Link.original_url.contains(original_url),
-        Link.is_active == True
-    ).all()
-    
-    return links
