@@ -6,16 +6,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@db:5432/urlshortener")
+TESTING = os.getenv("TESTING", "false").lower() == "true"
 
-engine = create_engine(
-    DATABASE_URL,
-    pool_size=10,
-    max_overflow=20,
-    pool_pre_ping=True,
-    pool_recycle=3600,
-    echo=False
-)
+if TESTING:
+    DATABASE_URL = "sqlite:///./test.db"
+    engine = create_engine(
+        DATABASE_URL, 
+        connect_args={"check_same_thread": False}
+    )
+else:
+    DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@db:5432/urlshortener")
+    engine = create_engine(DATABASE_URL)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

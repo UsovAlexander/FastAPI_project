@@ -8,7 +8,7 @@
 
 2.  **Создайте виртуальное окружение и установите зависимости:**
     ```bash
-    python3 -m venv venv_fastapi_project
+    python3.12 -m venv venv_fastapi_project
 
     source ./venv_fastapi_project/bin/activate
     

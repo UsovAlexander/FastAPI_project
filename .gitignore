@@ -3,3 +3,5 @@ __pycache__
 venv*
 .DS_store
 celerybeat-schedule
+.coverage
+test.db
