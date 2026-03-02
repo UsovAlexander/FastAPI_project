@@ -35,3 +35,17 @@
     ```bash
     docker-compose down
     ```
+
+4. **Работа с тестами:**
+ - Запуск
+    ```bash
+    coverage run -m pytest tests/ -v
+    ```
+ - Отчет
+    ```bash
+    coverage report -m
+    ```
+ - Отчет в HTML
+    ```bash
+    coverage html && open htmlcov/index.html
+    ```
