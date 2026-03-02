@@ -17,7 +17,7 @@ class UserResponse(BaseModel):
         from_attributes = True
 
 class LinkBase(BaseModel):
-    original_url: str  # Используем str вместо HttpUrl для простоты
+    original_url: str
 
 class LinkCreate(LinkBase):
     custom_alias: Optional[str] = None
