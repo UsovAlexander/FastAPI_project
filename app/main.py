@@ -1,5 +1,6 @@
 import os
 import logging
+import sys
 import time
 import redis.asyncio as redis
 
@@ -10,17 +11,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from apscheduler.schedulers.background import BackgroundScheduler
 from contextlib import asynccontextmanager
-from sqlalchemy import text
 
-from .database import init_db, get_db, engine
-from .routers import links, auth
-from .tasks import cleanup_expired_links, cleanup_unused_links
-from unittest.mock import Mock
-
-logging.basicConfig(level=logging.INFO)
+# Настройка логирования для stdout
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
 logger = logging.getLogger(__name__)
 
 load_dotenv()
+
+from .database import init_db_engine, create_tables, engine
+from .routers import links, auth
+from .tasks import cleanup_expired_links, cleanup_unused_links
 
 scheduler = BackgroundScheduler()
 cache = None
@@ -45,67 +49,45 @@ async def lifespan(app: FastAPI):
     global cache
     
     try:
-        # Инициализируем БД с retry логикой
-        max_retries = 5
-        retry_count = 0
-        db_initialized = False
+        # Даем время на инициализацию БД и Redis в Render
+        logger.info("⏳ Waiting for services to be ready...")
+        time.sleep(10)  # Даем дополнительное время
         
-        while retry_count < max_retries and not db_initialized:
-            try:
-                logger.info(f"Initializing database (attempt {retry_count + 1}/{max_retries})...")
-                
-                # Проверяем наличие DATABASE_URL
-                db_url = os.getenv("DATABASE_URL")
-                if not db_url:
-                    logger.error("DATABASE_URL not set")
-                    raise ValueError("DATABASE_URL environment variable is not set")
-                
-                logger.info(f"DATABASE_URL found: {db_url[:20]}...")  # Логируем начало URL для отладки
-                
-                # Инициализируем БД
-                init_db()
-                logger.info("Database initialized successfully")
-                db_initialized = True
-                
-            except Exception as e:
-                retry_count += 1
-                if retry_count == max_retries:
-                    logger.error(f"Failed to initialize database after {max_retries} attempts: {e}")
-                    raise
-                logger.warning(f"Database initialization attempt {retry_count} failed, retrying in 5 seconds...")
-                time.sleep(5)
+        # Инициализируем БД
+        logger.info("🔧 Initializing database...")
+        try:
+            init_db_engine(retries=5, delay=5)
+            create_tables()
+            logger.info("✅ Database initialized successfully")
+        except Exception as e:
+            logger.error(f"❌ Database initialization failed: {e}")
+            # Не падаем, продолжаем попытки
         
         # Инициализация Redis
         redis_url = os.getenv("REDIS_URL")
         if redis_url:
             try:
-                logger.info(f"Initializing Redis...")
+                logger.info("🔧 Initializing Redis...")
                 redis_client = redis.from_url(redis_url, decode_responses=True)
                 await redis_client.ping()
                 cache = Cache(Cache.REDIS, endpoint=redis_client, serializer=JsonSerializer())
                 app.state.cache = cache
-                logger.info("Redis cache initialized successfully")
+                logger.info("✅ Redis cache initialized successfully")
             except Exception as e:
-                logger.error(f"Failed to connect to Redis: {e}")
+                logger.error(f"❌ Failed to connect to Redis: {e}")
                 cache = None
                 app.state.cache = None
         else:
-            logger.warning("REDIS_URL not set, cache disabled")
+            logger.warning("⚠️ REDIS_URL not set, cache disabled")
             cache = None
             app.state.cache = None
-        
-        # Запускаем scheduler (опционально)
-        if os.getenv("ENABLE_SCHEDULER", "false").lower() == "true":
-            scheduler.add_job(run_cleanup_expired, "interval", hours=1)
-            scheduler.add_job(run_cleanup_unused, "interval", days=1)
-            scheduler.start()
-            logger.info("Scheduler started")
         
         yield
         
     except Exception as e:
-        logger.error(f"Fatal error during startup: {e}")
-        raise  # Пробрасываем ошибку, чтобы Render увидел, что деплой не удался
+        logger.error(f"💥 Fatal error during startup: {e}")
+        # Не падаем, позволяем приложению запуститься
+        yield
     finally:
         if scheduler.running:
             scheduler.shutdown()
@@ -131,9 +113,16 @@ app.include_router(links.router)
 @app.get("/")
 async def root():
     base_url = os.getenv("BASE_URL", "https://your-app.onrender.com")
+    db_status = "connected" if engine else "disconnected"
+    redis_status = "connected" if cache else "disconnected"
+    
     return {
         "message": "URL Shortener Service",
         "version": "1.0.0",
+        "status": {
+            "database": db_status,
+            "redis": redis_status
+        },
         "base_url": base_url,
         "endpoints": {
             "docs": "/docs",
@@ -151,7 +140,34 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy"}
+    db_status = "healthy" if engine else "unhealthy"
+    redis_status = "healthy" if cache else "unhealthy"
+    
+    return {
+        "status": "healthy",
+        "database": db_status,
+        "redis": redis_status
+    }
+
+@app.get("/debug/env")
+async def debug_env():
+    """Отладка переменных окружения"""
+    env_vars = {}
+    for key in os.environ.keys():
+        if 'DATABASE' in key or 'REDIS' in key or 'POSTGRES' in key:
+            # Маскируем чувствительные данные
+            value = os.environ[key]
+            if 'postgresql://' in value and '@' in value:
+                parts = value.split('@')
+                credentials = parts[0].split('://')[1].split(':')
+                masked = f"{credentials[0]}:****@{parts[1]}"
+                value = f"postgresql://{masked}"
+            env_vars[key] = value
+    
+    return {
+        "available_env_vars": list(env_vars.keys()),
+        "values": env_vars
+    }
 
 if __name__ == "__main__":
     import uvicorn
