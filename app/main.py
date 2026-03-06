@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from apscheduler.schedulers.background import BackgroundScheduler
 from contextlib import asynccontextmanager
 
-# Настройка логирования для stdout
+# Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-from .database import init_db_engine, create_tables, engine
+from .database import init_db_engine, is_db_connected, get_db
 from .routers import links, auth
 from .tasks import cleanup_expired_links, cleanup_unused_links
 
@@ -49,25 +49,23 @@ async def lifespan(app: FastAPI):
     global cache
     
     try:
-        # Даем время на инициализацию БД и Redis в Render
-        logger.info("⏳ Waiting for services to be ready...")
-        time.sleep(10)  # Даем дополнительное время
-        
-        # Инициализируем БД
-        logger.info("🔧 Initializing database...")
+        # Пробуем инициализировать БД, но не падаем если не получается
+        logger.info("Attempting to initialize database...")
         try:
-            init_db_engine(retries=5, delay=5)
-            create_tables()
-            logger.info("✅ Database initialized successfully")
+            init_db_engine(retries=3, delay=2)
+            if is_db_connected():
+                logger.info("✅ Database connected successfully")
+            else:
+                logger.warning("⚠️ Database not connected - app will run in limited mode")
         except Exception as e:
-            logger.error(f"❌ Database initialization failed: {e}")
-            # Не падаем, продолжаем попытки
+            logger.error(f"❌ Database initialization error: {e}")
+            logger.warning("Continuing without database - some features may not work")
         
         # Инициализация Redis
         redis_url = os.getenv("REDIS_URL")
         if redis_url:
             try:
-                logger.info("🔧 Initializing Redis...")
+                logger.info("Initializing Redis...")
                 redis_client = redis.from_url(redis_url, decode_responses=True)
                 await redis_client.ping()
                 cache = Cache(Cache.REDIS, endpoint=redis_client, serializer=JsonSerializer())
@@ -85,8 +83,7 @@ async def lifespan(app: FastAPI):
         yield
         
     except Exception as e:
-        logger.error(f"💥 Fatal error during startup: {e}")
-        # Не падаем, позволяем приложению запуститься
+        logger.error(f"💥 Error during startup: {e}")
         yield
     finally:
         if scheduler.running:
@@ -112,9 +109,10 @@ app.include_router(links.router)
 
 @app.get("/")
 async def root():
-    base_url = os.getenv("BASE_URL", "https://your-app.onrender.com")
-    db_status = "connected" if engine else "disconnected"
+    db_status = "connected" if is_db_connected() else "disconnected"
     redis_status = "connected" if cache else "disconnected"
+    
+    base_url = os.getenv("BASE_URL", "https://your-app.onrender.com")
     
     return {
         "message": "URL Shortener Service",
@@ -140,13 +138,13 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    db_status = "healthy" if engine else "unhealthy"
-    redis_status = "healthy" if cache else "unhealthy"
+    db_status = is_db_connected()
+    redis_status = cache is not None
     
     return {
-        "status": "healthy",
-        "database": db_status,
-        "redis": redis_status
+        "status": "healthy" if db_status and redis_status else "degraded",
+        "database": "connected" if db_status else "disconnected",
+        "redis": "connected" if redis_status else "disconnected"
     }
 
 @app.get("/debug/env")
@@ -155,18 +153,24 @@ async def debug_env():
     env_vars = {}
     for key in os.environ.keys():
         if 'DATABASE' in key or 'REDIS' in key or 'POSTGRES' in key:
-            # Маскируем чувствительные данные
             value = os.environ[key]
+            # Маскируем пароль
             if 'postgresql://' in value and '@' in value:
-                parts = value.split('@')
-                credentials = parts[0].split('://')[1].split(':')
-                masked = f"{credentials[0]}:****@{parts[1]}"
-                value = f"postgresql://{masked}"
+                try:
+                    parts = value.split('@')
+                    credentials = parts[0].split('://')[1].split(':')
+                    if len(credentials) > 1:
+                        masked = f"{credentials[0]}:****@{parts[1]}"
+                        value = f"postgresql://{masked}"
+                except:
+                    pass
             env_vars[key] = value
     
     return {
         "available_env_vars": list(env_vars.keys()),
-        "values": env_vars
+        "values": env_vars,
+        "database_connected": is_db_connected(),
+        "redis_connected": cache is not None
     }
 
 if __name__ == "__main__":

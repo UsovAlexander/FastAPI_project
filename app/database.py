@@ -1,9 +1,14 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import os
 import time
+import logging
 from dotenv import load_dotenv
+
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -16,85 +21,127 @@ SessionLocal = None
 def get_database_url():
     """Получение DATABASE_URL с подробным логированием"""
     url = os.getenv("DATABASE_URL")
-    print(f"🔍 Checking DATABASE_URL: {'Found' if url else 'Not found'}")
-    if url:
-        # Маскируем пароль для безопасности
-        masked_url = url.replace(url.split('@')[0].split(':')[-1], '****') if '@' in url else url
-        print(f"📦 DATABASE_URL: {masked_url}")
-    else:
-        print("❌ DATABASE_URL environment variable is not set")
-        print("📋 Available environment variables:")
-        for key in os.environ.keys():
-            if 'DATABASE' in key or 'DB_' in key or 'POSTGRES' in key:
-                print(f"   - {key}")
+    logger.info(f"Checking DATABASE_URL: {'Found' if url else 'Not found'}")
+    
+    # Также проверяем другие возможные переменные
+    if not url:
+        url = os.getenv("POSTGRES_URL")
+        if url:
+            logger.info("Using POSTGRES_URL instead")
+    
+    if not url:
+        url = os.getenv("RENDER_DATABASE_URL")
+        if url:
+            logger.info("Using RENDER_DATABASE_URL instead")
+    
     return url
 
-def init_db_engine(retries=10, delay=3):
+def init_db_engine(retries=3, delay=2):
     """Инициализация engine с повторными попытками"""
     global engine, SessionLocal
     
     for attempt in range(retries):
         try:
-            print(f"🔄 Database connection attempt {attempt + 1}/{retries}")
+            logger.info(f"Database connection attempt {attempt + 1}/{retries}")
             
             url = get_database_url()
             if not url:
-                raise ValueError("DATABASE_URL not found")
+                # Если нет URL, просто логируем и возвращаем None
+                # Не падаем с ошибкой, чтобы приложение могло запуститься
+                logger.warning("DATABASE_URL not found, skipping database initialization")
+                return None
+            
+            logger.info(f"Creating database engine...")
             
             # Создаем engine
-            if "render.com" in url:
-                print("⚙️ Using Render.com PostgreSQL configuration")
+            if "render.com" in url or "postgres" in url:
+                logger.info("Using PostgreSQL configuration")
                 engine = create_engine(
                     url,
-                    connect_args={"sslmode": "require"},
+                    connect_args={"sslmode": "require"} if "render.com" in url else {},
                     pool_pre_ping=True,
                     pool_recycle=300,
-                    echo=True  # Временно включим для отладки
+                    echo=False  # Отключаем echo для продакшена
                 )
             else:
-                engine = create_engine(url, echo=True)
+                engine = create_engine(url, echo=False)
             
             # Проверяем подключение
             with engine.connect() as conn:
-                conn.execute("SELECT 1")
-            print("✅ Database connection successful")
+                conn.execute(text("SELECT 1"))
+                conn.commit()
+            logger.info("✅ Database connection successful")
             
             SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+            
+            # Создаем таблицы
+            logger.info("Creating database tables...")
+            Base.metadata.create_all(bind=engine)
+            logger.info("✅ Database tables created successfully")
+            
             return engine
             
         except Exception as e:
-            print(f"❌ Attempt {attempt + 1} failed: {e}")
+            logger.error(f"❌ Attempt {attempt + 1} failed: {e}")
             if attempt < retries - 1:
-                print(f"⏳ Waiting {delay} seconds before retry...")
+                logger.info(f"Waiting {delay} seconds before retry...")
                 time.sleep(delay)
             else:
-                print("❌ All database connection attempts failed")
-                raise
+                logger.error("All database connection attempts failed")
+                # Возвращаем None вместо raise, чтобы приложение могло запуститься
+                return None
     
     return None
 
 def get_db():
     """Генератор для получения сессии БД"""
-    global SessionLocal
-    if SessionLocal is None:
+    global SessionLocal, engine
+    
+    # Если engine еще не инициализирован, пробуем инициализировать
+    if engine is None:
+        logger.info("Database engine not initialized, initializing now...")
         init_db_engine()
     
+    # Если после инициализации все еще нет SessionLocal, возвращаем заглушку
+    if SessionLocal is None:
+        logger.error("Cannot create database session - database not available")
+        # Возвращаем заглушку, чтобы приложение не падало
+        class DummyDB:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+            def query(self, *args, **kwargs):
+                return []
+            def add(self, *args):
+                pass
+            def commit(self):
+                pass
+            def refresh(self, *args):
+                pass
+            def close(self):
+                pass
+        
+        yield DummyDB()
+        return
+    
+    # Нормальная работа с БД
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
 
-# Функция для создания таблиц
-def create_tables():
-    """Создание таблиц в базе данных"""
+# Функция для проверки статуса БД
+def is_db_connected():
+    """Проверка подключения к БД"""
     global engine
     if engine is None:
-        engine = init_db_engine()
-    
-    if engine:
-        print("📦 Creating database tables...")
-        Base.metadata.create_all(bind=engine)
-        print("✅ Database tables created successfully")
-    else:
-        print("❌ Cannot create tables: no database engine")
+        return False
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+            conn.commit()
+        return True
+    except:
+        return False

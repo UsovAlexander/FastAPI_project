@@ -10,6 +10,13 @@ from typing import Optional
 from ..database import get_db
 from ..models import User
 from ..schemas import UserCreate, UserResponse, Token
+from ..database import is_db_connected
+
+if not is_db_connected():
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Database is not available"
+    )
 
 
 SECRET_KEY = os.getenv("SECRET_KEY")

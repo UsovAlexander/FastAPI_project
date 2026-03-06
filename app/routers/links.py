@@ -18,6 +18,13 @@ from ..models import Link, User
 from ..schemas import LinkCreate, LinkResponse, LinkUpdate, LinkStats
 from ..routers.auth import get_current_user
 from ..tasks import increment_click_count
+from ..database import is_db_connected
+
+if not is_db_connected():
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Database is not available"
+    )
 
 router = APIRouter(prefix="/links", tags=["links"])
 logger = logging.getLogger(__name__)
