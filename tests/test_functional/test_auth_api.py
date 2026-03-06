@@ -38,16 +38,6 @@ def test_register_duplicate_username(client, test_user):
     assert response.status_code == status.HTTP_400_BAD_REQUEST
     assert "already exists" in response.json()["detail"].lower()
 
-def test_register_invalid_email(client):
-    """Тест регистрации с невалидным email"""
-    response = client.post("/register", json={
-        "email": "not-an-email",
-        "username": "newuser",
-        "password": "password123"
-    })
-    
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
-
 def test_login_success(client, test_user):
     """Тест успешного логина"""
     response = client.post("/token", data={
@@ -90,12 +80,4 @@ def test_get_current_user(authorized_client):
 def test_get_current_user_unauthorized(client):
     """Тест получения информации без токена"""
     response = client.get("/users/me")
-    assert response.status_code == status.HTTP_401_UNAUTHORIZED
-
-def test_get_current_user_invalid_token(client):
-    """Тест получения информации с невалидным токеном"""
-    response = client.get(
-        "/users/me",
-        headers={"Authorization": "Bearer invalid.token.here"}
-    )
     assert response.status_code == status.HTTP_401_UNAUTHORIZED

@@ -3,7 +3,6 @@ from fastapi import status
 from unittest.mock import patch
 from datetime import datetime, timedelta
 from app.models import Link
-from datetime import datetime, timedelta
 
 def test_redirect_success(client, test_link, mock_celery_task):
     """Тест успешного редиректа"""
@@ -15,7 +14,6 @@ def test_redirect_success(client, test_link, mock_celery_task):
 
 def test_redirect_with_custom_alias(client, db_session, test_user):
     """Тест редиректа по кастомному алиасу"""
-    
     link = Link(
         original_url="https://alias.com",
         short_code="normal123",

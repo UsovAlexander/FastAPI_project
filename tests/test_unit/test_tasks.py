@@ -6,7 +6,6 @@ from app.models import Link
 
 def test_cleanup_expired_links(db_session, test_user):
     """Тест очистки истекших ссылок"""
-
     expired_link = Link(
         original_url="https://expired.com",
         short_code="expired",
@@ -16,10 +15,10 @@ def test_cleanup_expired_links(db_session, test_user):
     )
     db_session.add(expired_link)
     db_session.commit()
-
+    
     link_id = expired_link.id
 
-    with patch('app.tasks.SessionLocal', return_value=db_session):
+    with patch('app.tasks.get_task_session', return_value=db_session):
         result = cleanup_expired_links()
         assert "Cleaned up 1 expired links" in result
 
@@ -29,7 +28,6 @@ def test_cleanup_expired_links(db_session, test_user):
 
 def test_cleanup_unused_links(db_session, test_user):
     """Тест очистки неиспользуемых ссылок"""
-
     unused_link = Link(
         original_url="https://unused.com",
         short_code="unused",
@@ -42,7 +40,7 @@ def test_cleanup_unused_links(db_session, test_user):
 
     link_id = unused_link.id
     
-    with patch('app.tasks.SessionLocal', return_value=db_session):
+    with patch('app.tasks.get_task_session', return_value=db_session):
         result = cleanup_unused_links(30)
         assert "Cleaned up 1 unused links" in result
 
@@ -52,11 +50,10 @@ def test_cleanup_unused_links(db_session, test_user):
 
 def test_increment_click_count(db_session, test_link):
     """Тест увеличения счетчика кликов"""
-
     link_id = test_link.id
     initial_clicks = test_link.clicks
     
-    with patch('app.tasks.SessionLocal', return_value=db_session):
+    with patch('app.tasks.get_task_session', return_value=db_session):
         result = increment_click_count(link_id)
         assert f"Incremented clicks for link {link_id}" in result
 
@@ -68,13 +65,13 @@ def test_increment_click_count(db_session, test_link):
 
 def test_increment_click_count_nonexistent_link(db_session):
     """Тест увеличения счетчика для несуществующей ссылки"""
-    with patch('app.tasks.SessionLocal', return_value=db_session):
+    with patch('app.tasks.get_task_session', return_value=db_session):
         result = increment_click_count("nonexistent-id")
         assert "Incremented clicks for link nonexistent-id" in result
 
 def test_cleanup_expired_links_no_expired(db_session):
     """Тест очистки когда нет истекших ссылок"""
-    with patch('app.tasks.SessionLocal', return_value=db_session):
+    with patch('app.tasks.get_task_session', return_value=db_session):
         result = cleanup_expired_links()
         assert "Cleaned up 0 expired links" in result
 
@@ -90,6 +87,6 @@ def test_cleanup_unused_links_no_unused(db_session, test_user):
     db_session.add(active_link)
     db_session.commit()
     
-    with patch('app.tasks.SessionLocal', return_value=db_session):
+    with patch('app.tasks.get_task_session', return_value=db_session):
         result = cleanup_unused_links(30)
         assert "Cleaned up 0 unused links" in result

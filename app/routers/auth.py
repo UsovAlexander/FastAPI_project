@@ -65,26 +65,38 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     )
     
     if not token:
+        print("DEBUG: No token provided")
         raise credentials_exception
     
     try:
+        print(f"DEBUG: Token received: {token[:20]}...")
         secret_key = get_secret_key()
+        print(f"DEBUG: Secret key: {secret_key[:5]}...")
+
         payload = jwt.decode(token, secret_key, algorithms=[ALGORITHM])
+        print(f"DEBUG: Payload: {payload}")
+        
         username: str = payload.get("sub")
         if username is None:
+            print("DEBUG: No username in payload")
             raise credentials_exception
-    except JWTError:
+            
+    except JWTError as e:
+        print(f"DEBUG: JWT Error: {e}")
         raise credentials_exception
-    
+
     if not is_db_connected():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database is not available"
         )
-    
+
     user = db.query(User).filter(User.username == username).first()
     if user is None:
+        print(f"DEBUG: User {username} not found in DB")
         raise credentials_exception
+    
+    print(f"DEBUG: User found: {user.username}")
     return user
 
 @router.post("/register", response_model=UserResponse)
@@ -140,8 +152,13 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = 
     access_token = create_access_token(
         data={"sub": user.username}, expires_delta=access_token_expires
     )
-    
-    return {"access_token": access_token, "token_type": "bearer"}
+
+    return {
+        "access_token": access_token, 
+        "token_type": "bearer",
+        "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        "username": user.username
+    }
 
 @router.get("/users/me", response_model=UserResponse)
 async def read_users_me(current_user: User = Depends(get_current_user)):

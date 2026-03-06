@@ -11,6 +11,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from apscheduler.schedulers.background import BackgroundScheduler
 from contextlib import asynccontextmanager
+from .database import init_db_engine, is_db_connected, get_db
+from .routers import links, auth
+from .tasks import cleanup_expired_links, cleanup_unused_links
+from fastapi_cache import FastAPICache
+from fastapi_cache.backends.redis import RedisBackend
+from unittest.mock import Mock
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,9 +27,7 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-from .database import init_db_engine, is_db_connected, get_db
-from .routers import links, auth
-from .tasks import cleanup_expired_links, cleanup_unused_links
+
 
 scheduler = BackgroundScheduler()
 cache = None
@@ -41,6 +45,9 @@ def run_cleanup_unused():
         logger.info("Scheduled unused links cleanup")
     except Exception as e:
         logger.error(f"Error scheduling unused links cleanup: {e}")
+
+scheduler.add_job(run_cleanup_expired, "interval", hours=1)
+scheduler.add_job(run_cleanup_unused, "interval", days=1)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -83,9 +90,12 @@ async def lifespan(app: FastAPI):
         logger.error(f"Error during startup: {e}")
         yield
     finally:
-        if scheduler.running:
-            scheduler.shutdown()
-            logger.info("Scheduler shutdown")
+        if os.getenv("TESTING") != "true":
+            try:
+                scheduler.shutdown()
+                logger.info("Scheduler shutdown")
+            except Exception as e:
+                logger.error(f"Error during shutdown: {e}")
 
 app = FastAPI(
     title="URL Shortener Service", 

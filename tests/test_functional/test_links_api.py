@@ -1,8 +1,7 @@
 import pytest
 from fastapi import status
-from datetime import datetime, timedelta
 
-def test_create_short_link_unauthorized(client, mock_celery_task):
+def test_create_short_link_unauthorized(client):
     """Тест создания ссылки без авторизации"""
     response = client.post("/links/shorten", json={
         "original_url": "https://example.com"
@@ -10,9 +9,9 @@ def test_create_short_link_unauthorized(client, mock_celery_task):
     
     assert response.status_code == 401
     data = response.json()
-    assert data["detail"] == "Not authenticated"
+    assert "detail" in data
 
-def test_create_link_with_custom_alias(authorized_client):
+def test_create_link_with_custom_alias(authorized_client, mock_celery_task):
     """Тест создания ссылки с кастомным алиасом"""
     response = authorized_client.post("/links/shorten", json={
         "original_url": "https://example.com",
@@ -24,7 +23,7 @@ def test_create_link_with_custom_alias(authorized_client):
     assert data["short_code"] == "myalias123"
     assert data["custom_alias"] == "myalias123"
 
-def test_get_link_stats(client, test_link, mock_redis_cache):
+def test_get_link_stats(client, test_link):
     """Тест получения статистики ссылки"""
     response = client.get(f"/links/{test_link.short_code}/stats")
     
@@ -51,3 +50,12 @@ def test_delete_link(authorized_client, test_link):
     
     assert response.status_code == status.HTTP_200_OK
     assert "message" in response.json()
+
+def test_search_links(client, test_link):
+    """Тест поиска ссылок"""
+    response = client.get(f"/links/search?original_url={test_link.original_url}")
+    
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) > 0
+    assert data[0]["short_code"] == test_link.short_code

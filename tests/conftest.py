@@ -2,24 +2,21 @@ import pytest
 import os
 import sys
 import asyncio
-import kombu
-
-from unittest.mock import Mock, patch
-from celery import Celery
-from celery.app import app_or_default
-from sqlalchemy import create_engine
+from unittest.mock import Mock, patch, AsyncMock
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from fastapi.testclient import TestClient
 
-
 os.environ["TESTING"] = "true"
+os.environ["SECRET_KEY"] = "test-secret-key-for-testing"
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from app.main import app
-from app.database import Base, get_db
+from app.database import Base, get_db, init_db_engine, is_db_connected, engine as global_engine
 from app.models import User, Link
-from app.routers.auth import create_access_token, get_password_hash
+from app.routers.auth import create_access_token, get_password_hash, get_secret_key
+from app.tasks import celery_app
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
 engine = create_engine(
@@ -28,16 +25,34 @@ engine = create_engine(
 )
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+@pytest.fixture(autouse=True)
+def mock_db_connection():
+    """Автоматически мокаем подключение к БД для всех тестов"""
+    with patch('app.database.is_db_connected', return_value=True), \
+         patch('app.routers.auth.is_db_connected', return_value=True), \
+         patch('app.routers.links.is_db_connected', return_value=True):
+        yield
+
 @pytest.fixture(scope="function")
 def db_session():
     """Создание тестовой сессии БД"""
     Base.metadata.create_all(bind=engine)
+
     session = TestingSessionLocal()
+    
+
+    from app.database import engine as db_engine
+    original_engine = db_engine
+    import app.database
+    app.database.engine = engine
+    app.database.SessionLocal = TestingSessionLocal
+    
     try:
         yield session
     finally:
         session.close()
         Base.metadata.drop_all(bind=engine)
+        app.database.engine = original_engine
 
 @pytest.fixture(scope="function")
 def client(db_session):
@@ -50,12 +65,16 @@ def client(db_session):
     
     app.dependency_overrides[get_db] = override_get_db
 
-    with patch('app.main.cache') as mock_cache:
-        mock_cache.get = Mock()
-        mock_cache.set = Mock()
-        mock_cache.delete = Mock()
-        with TestClient(app) as test_client:
-            yield test_client
+    with patch('app.main.redis.from_url') as mock_redis:
+        mock_redis_client = AsyncMock()
+        mock_redis_client.ping = AsyncMock(return_value=True)
+        mock_redis.return_value = mock_redis_client
+
+        with patch('app.main.Cache') as mock_cache:
+            mock_cache.return_value = Mock()
+            
+            with TestClient(app) as test_client:
+                yield test_client
     
     app.dependency_overrides.clear()
 
@@ -117,14 +136,14 @@ def another_link(db_session, another_user):
 def user_token(test_user):
     """Создание токена для тестового пользователя"""
     access_token = create_access_token(data={"sub": test_user.username})
-    return {"access_token": access_token, "token_type": "bearer"}
+    return access_token
 
 @pytest.fixture
 def authorized_client(client, user_token):
     """Авторизованный клиент"""
     client.headers = {
         **client.headers,
-        "Authorization": f"Bearer {user_token['access_token']}"
+        "Authorization": f"Bearer {user_token}"
     }
     return client
 
@@ -135,31 +154,18 @@ def mock_redis_cache():
         mock_cached.return_value = lambda x: x
         yield mock_cached
 
-@pytest.fixture(autouse=True)
-def mock_cache_init():
-    """Мок для инициализации кэша"""
-    with patch('app.main.FastAPICache.init') as mock_init:
-        mock_init.return_value = None
-        yield mock_init
-
-@pytest.fixture(autouse=True)
-def mock_redis_and_celery(monkeypatch):
-    """Глобальный мок для Redis и Celery во всех тестах"""
-    mock_connection = Mock()
-    mock_connection.ensure_connection = Mock()
-
-    monkeypatch.setattr(kombu, "Connection", lambda *args, **kwargs: mock_connection)
-
-    monkeypatch.setattr("app.celery_app.celery_app", Mock())
-    monkeypatch.setattr("app.tasks.celery_app", Mock())
-
 @pytest.fixture
 def mock_celery_task():
-    """Улучшенный мок для Celery задач"""
+    """Мок для Celery задач"""
     with patch('app.routers.links.increment_click_count') as mock_task:
         mock_task.delay = Mock(return_value=None)
-        mock_task.apply_async = Mock()
         yield mock_task
+
+@pytest.fixture(scope="function")
+def mock_secret_key():
+    """Мок для SECRET_KEY"""
+    with patch('app.routers.auth.get_secret_key', return_value="test-secret-key"):
+        yield
 
 @pytest.fixture(scope="session")
 def event_loop():
@@ -167,17 +173,3 @@ def event_loop():
     loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop
     loop.close()
-
-@pytest.fixture(autouse=True)
-def mock_aiocache(monkeypatch):
-    """Глобальный мок для aiocache во всех тестах"""
-    mock_cached = Mock()
-    mock_cached.return_value = lambda f: f 
-
-    monkeypatch.setattr("aiocache.cached", mock_cached)
-
-    mock_serializer = Mock()
-    monkeypatch.setattr("aiocache.serializers.JsonSerializer", lambda: mock_serializer)
-    
-    yield mock_cached
-
