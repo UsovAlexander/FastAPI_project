@@ -150,27 +150,28 @@ async def health_check():
 @app.get("/debug/env")
 async def debug_env():
     """Отладка переменных окружения"""
-    env_vars = {}
+    import os
+    safe_vars = {}
     for key in os.environ.keys():
-        if 'DATABASE' in key or 'REDIS' in key or 'POSTGRES' in key:
+        if 'SECRET' in key or 'DATABASE' in key or 'REDIS' in key:
             value = os.environ[key]
-            # Маскируем пароль
+            # Маскируем чувствительные данные
             if 'postgresql://' in value and '@' in value:
-                try:
-                    parts = value.split('@')
-                    credentials = parts[0].split('://')[1].split(':')
-                    if len(credentials) > 1:
-                        masked = f"{credentials[0]}:****@{parts[1]}"
-                        value = f"postgresql://{masked}"
-                except:
-                    pass
-            env_vars[key] = value
+                parts = value.split('@')
+                credentials = parts[0].split('://')[1].split(':')
+                if len(credentials) > 1:
+                    masked = f"{credentials[0]}:****@{parts[1]}"
+                    value = f"postgresql://{masked}"
+            elif key == 'SECRET_KEY' and value:
+                value = '****' + value[-4:] if len(value) > 4 else '****'
+            safe_vars[key] = value
     
     return {
-        "available_env_vars": list(env_vars.keys()),
-        "values": env_vars,
-        "database_connected": is_db_connected(),
-        "redis_connected": cache is not None
+        "environment": os.getenv("RENDER", "not set"),
+        "secret_key_set": bool(os.getenv("SECRET_KEY")),
+        "database_url_set": bool(os.getenv("DATABASE_URL")),
+        "redis_url_set": bool(os.getenv("REDIS_URL")),
+        "variables": safe_vars
     }
 
 if __name__ == "__main__":

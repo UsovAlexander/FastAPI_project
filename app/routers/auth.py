@@ -12,11 +12,8 @@ from ..models import User
 from ..schemas import UserCreate, UserResponse, Token
 from ..database import is_db_connected
 
-
-SECRET_KEY = os.getenv("SECRET_KEY")
-if not SECRET_KEY:
-    raise ValueError("SECRET_KEY environment variable is not set")
-
+# НЕ проверяем SECRET_KEY здесь, только получаем значение или используем заглушку
+SECRET_KEY = os.getenv("SECRET_KEY", "temporary-secret-key-for-dev")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
@@ -24,6 +21,17 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
 
 router = APIRouter(tags=["authentication"])
+
+def get_secret_key():
+    """Получение SECRET_KEY с проверкой"""
+    key = os.getenv("SECRET_KEY")
+    if not key:
+        # В продакшене это вызовет ошибку, но позволит приложению запуститься
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Server configuration error: SECRET_KEY not set"
+        )
+    return key
 
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
@@ -44,7 +52,10 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     else:
         expire = datetime.utcnow() + timedelta(minutes=15)
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    
+    # Получаем секретный ключ при создании токена
+    secret_key = get_secret_key()
+    encoded_jwt = jwt.encode(to_encode, secret_key, algorithm=ALGORITHM)
     return encoded_jwt
 
 async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
@@ -58,7 +69,9 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
         raise credentials_exception
     
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        # Получаем секретный ключ при проверке токена
+        secret_key = get_secret_key()
+        payload = jwt.decode(token, secret_key, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
         if username is None:
             raise credentials_exception
