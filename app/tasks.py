@@ -5,14 +5,22 @@ from datetime import datetime, timedelta
 import os
 from .models import Link
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@db:5432/urlshortener")
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL environment variable is not set")
+
+# Настройки для Render.com PostgreSQL
+connect_args = {}
+if "render.com" in DATABASE_URL:
+    connect_args["sslmode"] = "require"
 
 engine = create_engine(
     DATABASE_URL,
     pool_size=5,
     max_overflow=10,
     pool_pre_ping=True,
-    pool_recycle=3600
+    pool_recycle=3600,
+    connect_args=connect_args
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

@@ -24,11 +24,7 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-
-Base.metadata.create_all(bind=engine)
-
 scheduler = BackgroundScheduler()
-
 cache = None
 
 def run_cleanup_expired():
@@ -45,28 +41,41 @@ def run_cleanup_unused():
     except Exception as e:
         logger.error(f"Error scheduling unused links cleanup: {e}")
 
-scheduler.add_job(run_cleanup_expired, "interval", hours=1)
-scheduler.add_job(run_cleanup_unused, "interval", days=1)
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    "Lifespan контекстный менеджер для управления ресурсами"
+    """Lifespan контекстный менеджер для управления ресурсами"""
     global cache
     
     try:
+        # Создаем таблицы БД
+        logger.info("Creating database tables...")
+        Base.metadata.create_all(bind=engine)
+        logger.info("Database tables created successfully")
+        
         if os.getenv("TESTING") == "true":
             cache = Mock()
             logger.info("Using mock cache for testing")
         else:
-            redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
-            cache = Cache(Cache.REDIS, endpoint="redis", port=6379, serializer=JsonSerializer())
-            logger.info(f"Redis cache initialized with URL: {redis_url}")
+            redis_url = os.getenv("REDIS_URL")
+            if not redis_url:
+                logger.warning("REDIS_URL not set, using default")
+                redis_url = "redis://localhost:6379/0"
+            
+            # Исправляем инициализацию Redis
+            redis_client = redis.from_url(redis_url, decode_responses=True)
+            cache = Cache(Cache.REDIS, endpoint=redis_client, serializer=JsonSerializer())
+            logger.info(f"Redis cache initialized")
         
         app.state.cache = cache
         
-        if os.getenv("TESTING") != "true":
+        # Запускаем scheduler только если не в тестовом режиме
+        if os.getenv("TESTING") != "true" and os.getenv("RENDER") != "true":
+            scheduler.add_job(run_cleanup_expired, "interval", hours=1)
+            scheduler.add_job(run_cleanup_unused, "interval", days=1)
             scheduler.start()
             logger.info("Scheduler started")
+        else:
+            logger.info("Scheduler not started (testing or Render environment)")
         
         yield
         
@@ -74,7 +83,7 @@ async def lifespan(app: FastAPI):
         logger.error(f"Error during startup: {e}")
         yield
     finally:
-        if os.getenv("TESTING") != "true":
+        if scheduler.running:
             try:
                 scheduler.shutdown()
                 logger.info("Scheduler shutdown")
@@ -100,7 +109,7 @@ app.include_router(links.router)
 
 @app.get("/")
 async def root():
-    base_url = os.getenv("BASE_URL", "http://localhost:8000")
+    base_url = os.getenv("BASE_URL", "https://your-app.onrender.com")
     return {
         "message": "URL Shortener Service",
         "version": "1.0.0",
