@@ -5,29 +5,41 @@ from datetime import datetime, timedelta
 import os
 from .models import Link
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    raise ValueError("DATABASE_URL environment variable is not set")
+# Не создаем engine сразу, только когда он нужен
+def get_task_engine():
+    """Создает engine для задач Celery"""
+    DATABASE_URL = os.getenv("DATABASE_URL")
+    if not DATABASE_URL:
+        raise ValueError("DATABASE_URL environment variable is not set")
+    
+    connect_args = {}
+    if "render.com" in DATABASE_URL:
+        connect_args["sslmode"] = "require"
+    
+    return create_engine(
+        DATABASE_URL,
+        pool_size=5,
+        max_overflow=10,
+        pool_pre_ping=True,
+        pool_recycle=3600,
+        connect_args=connect_args
+    )
 
-# Настройки для Render.com PostgreSQL
-connect_args = {}
-if "render.com" in DATABASE_URL:
-    connect_args["sslmode"] = "require"
+# Глобальная переменная для engine (будет создана при первом использовании)
+_task_engine = None
 
-engine = create_engine(
-    DATABASE_URL,
-    pool_size=5,
-    max_overflow=10,
-    pool_pre_ping=True,
-    pool_recycle=3600,
-    connect_args=connect_args
-)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+def get_task_session():
+    """Возвращает новую сессию для задач"""
+    global _task_engine
+    if _task_engine is None:
+        _task_engine = get_task_engine()
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_task_engine)
+    return SessionLocal()
 
 @celery_app.task
 def cleanup_expired_links():
     """Удаление истекших ссылок"""
-    db = SessionLocal()
+    db = get_task_session()
     try:
         now = datetime.utcnow()
         expired_links = db.query(Link).filter(
@@ -46,7 +58,7 @@ def cleanup_expired_links():
 @celery_app.task
 def cleanup_unused_links(days: int = 30):
     """Удаление неиспользуемых ссылок (без переходов за N дней)"""
-    db = SessionLocal()
+    db = get_task_session()
     try:
         cutoff_date = datetime.utcnow() - timedelta(days=days)
         unused_links = db.query(Link).filter(
@@ -65,7 +77,7 @@ def cleanup_unused_links(days: int = 30):
 @celery_app.task
 def increment_click_count(link_id: str):
     """Увеличение счетчика кликов"""
-    db = SessionLocal()
+    db = get_task_session()
     try:
         link = db.query(Link).filter(Link.id == link_id).first()
         if link:

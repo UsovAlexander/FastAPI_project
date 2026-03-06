@@ -1,20 +1,18 @@
 import os
 import logging
+import time
 import redis.asyncio as redis
 
 from aiocache import Cache
 from aiocache.serializers import JsonSerializer
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi_cache import FastAPICache
-from fastapi_cache.backends.redis import RedisBackend
-
 from dotenv import load_dotenv
 from apscheduler.schedulers.background import BackgroundScheduler
-
 from contextlib import asynccontextmanager
+from sqlalchemy import text
 
-from .database import engine, Base
+from .database import init_db, get_db, engine
 from .routers import links, auth
 from .tasks import cleanup_expired_links, cleanup_unused_links
 from unittest.mock import Mock
@@ -47,48 +45,71 @@ async def lifespan(app: FastAPI):
     global cache
     
     try:
-        # Создаем таблицы БД
-        logger.info("Creating database tables...")
-        Base.metadata.create_all(bind=engine)
-        logger.info("Database tables created successfully")
+        # Инициализируем БД с retry логикой
+        max_retries = 5
+        retry_count = 0
+        db_initialized = False
         
-        if os.getenv("TESTING") == "true":
-            cache = Mock()
-            logger.info("Using mock cache for testing")
+        while retry_count < max_retries and not db_initialized:
+            try:
+                logger.info(f"Initializing database (attempt {retry_count + 1}/{max_retries})...")
+                
+                # Проверяем наличие DATABASE_URL
+                db_url = os.getenv("DATABASE_URL")
+                if not db_url:
+                    logger.error("DATABASE_URL not set")
+                    raise ValueError("DATABASE_URL environment variable is not set")
+                
+                logger.info(f"DATABASE_URL found: {db_url[:20]}...")  # Логируем начало URL для отладки
+                
+                # Инициализируем БД
+                init_db()
+                logger.info("Database initialized successfully")
+                db_initialized = True
+                
+            except Exception as e:
+                retry_count += 1
+                if retry_count == max_retries:
+                    logger.error(f"Failed to initialize database after {max_retries} attempts: {e}")
+                    raise
+                logger.warning(f"Database initialization attempt {retry_count} failed, retrying in 5 seconds...")
+                time.sleep(5)
+        
+        # Инициализация Redis
+        redis_url = os.getenv("REDIS_URL")
+        if redis_url:
+            try:
+                logger.info(f"Initializing Redis...")
+                redis_client = redis.from_url(redis_url, decode_responses=True)
+                await redis_client.ping()
+                cache = Cache(Cache.REDIS, endpoint=redis_client, serializer=JsonSerializer())
+                app.state.cache = cache
+                logger.info("Redis cache initialized successfully")
+            except Exception as e:
+                logger.error(f"Failed to connect to Redis: {e}")
+                cache = None
+                app.state.cache = None
         else:
-            redis_url = os.getenv("REDIS_URL")
-            if not redis_url:
-                logger.warning("REDIS_URL not set, using default")
-                redis_url = "redis://localhost:6379/0"
-            
-            # Исправляем инициализацию Redis
-            redis_client = redis.from_url(redis_url, decode_responses=True)
-            cache = Cache(Cache.REDIS, endpoint=redis_client, serializer=JsonSerializer())
-            logger.info(f"Redis cache initialized")
+            logger.warning("REDIS_URL not set, cache disabled")
+            cache = None
+            app.state.cache = None
         
-        app.state.cache = cache
-        
-        # Запускаем scheduler только если не в тестовом режиме
-        if os.getenv("TESTING") != "true" and os.getenv("RENDER") != "true":
+        # Запускаем scheduler (опционально)
+        if os.getenv("ENABLE_SCHEDULER", "false").lower() == "true":
             scheduler.add_job(run_cleanup_expired, "interval", hours=1)
             scheduler.add_job(run_cleanup_unused, "interval", days=1)
             scheduler.start()
             logger.info("Scheduler started")
-        else:
-            logger.info("Scheduler not started (testing or Render environment)")
         
         yield
         
     except Exception as e:
-        logger.error(f"Error during startup: {e}")
-        yield
+        logger.error(f"Fatal error during startup: {e}")
+        raise  # Пробрасываем ошибку, чтобы Render увидел, что деплой не удался
     finally:
         if scheduler.running:
-            try:
-                scheduler.shutdown()
-                logger.info("Scheduler shutdown")
-            except Exception as e:
-                logger.error(f"Error during shutdown: {e}")
+            scheduler.shutdown()
+            logger.info("Scheduler shutdown")
 
 app = FastAPI(
     title="URL Shortener Service", 
