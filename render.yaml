@@ -16,6 +16,10 @@ services:
           property: connectionString
       - key: SECRET_KEY
         generateValue: true
+    # Явно указываем зависимости
+    dependencies:
+      - url-shortener-db
+      - url-shortener-redis
 
   - type: redis
     name: url-shortener-redis
@@ -42,6 +46,10 @@ services:
           type: web
           name: url-shortener
           property: envVarKey: SECRET_KEY
+    dependencies:
+      - url-shortener-db
+      - url-shortener-redis
+      - url-shortener
 
 databases:
   - name: url-shortener-db
