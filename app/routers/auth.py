@@ -1,10 +1,11 @@
+import os
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-import os
 from typing import Optional
 
 from ..database import get_db
@@ -12,7 +13,7 @@ from ..models import User
 from ..schemas import UserCreate, UserResponse, Token
 from ..database import is_db_connected
 
-# НЕ проверяем SECRET_KEY здесь, только получаем значение или используем заглушку
+
 SECRET_KEY = os.getenv("SECRET_KEY", "temporary-secret-key-for-dev")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
@@ -26,7 +27,6 @@ def get_secret_key():
     """Получение SECRET_KEY с проверкой"""
     key = os.getenv("SECRET_KEY")
     if not key:
-        # В продакшене это вызовет ошибку, но позволит приложению запуститься
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Server configuration error: SECRET_KEY not set"
@@ -53,7 +53,6 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
         expire = datetime.utcnow() + timedelta(minutes=15)
     to_encode.update({"exp": expire})
     
-    # Получаем секретный ключ при создании токена
     secret_key = get_secret_key()
     encoded_jwt = jwt.encode(to_encode, secret_key, algorithm=ALGORITHM)
     return encoded_jwt
@@ -69,7 +68,6 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
         raise credentials_exception
     
     try:
-        # Получаем секретный ключ при проверке токена
         secret_key = get_secret_key()
         payload = jwt.decode(token, secret_key, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
@@ -78,7 +76,6 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     except JWTError:
         raise credentials_exception
     
-    # Проверяем подключение к БД
     if not is_db_connected():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -93,7 +90,6 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
 @router.post("/register", response_model=UserResponse)
 async def register(user_data: UserCreate, db: Session = Depends(get_db)):
     """Регистрация нового пользователя"""
-    # Проверяем подключение к БД
     if not is_db_connected():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -126,7 +122,6 @@ async def register(user_data: UserCreate, db: Session = Depends(get_db)):
 @router.post("/token", response_model=Token)
 async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     """Получение токена доступа"""
-    # Проверяем подключение к БД
     if not is_db_connected():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

@@ -1,11 +1,11 @@
+import os
+
 from .celery_app import celery_app
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime, timedelta
-import os
 from .models import Link
 
-# Не создаем engine сразу, только когда он нужен
 def get_task_engine():
     """Создает engine для задач Celery"""
     DATABASE_URL = os.getenv("DATABASE_URL")
@@ -25,7 +25,6 @@ def get_task_engine():
         connect_args=connect_args
     )
 
-# Глобальная переменная для engine (будет создана при первом использовании)
 _task_engine = None
 
 def get_task_session():

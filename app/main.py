@@ -12,7 +12,6 @@ from dotenv import load_dotenv
 from apscheduler.schedulers.background import BackgroundScheduler
 from contextlib import asynccontextmanager
 
-# Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -49,19 +48,17 @@ async def lifespan(app: FastAPI):
     global cache
     
     try:
-        # Пробуем инициализировать БД, но не падаем если не получается
         logger.info("Attempting to initialize database...")
         try:
             init_db_engine(retries=3, delay=2)
             if is_db_connected():
-                logger.info("✅ Database connected successfully")
+                logger.info("Database connected successfully")
             else:
-                logger.warning("⚠️ Database not connected - app will run in limited mode")
+                logger.warning("Database not connected - app will run in limited mode")
         except Exception as e:
-            logger.error(f"❌ Database initialization error: {e}")
+            logger.error(f"Database initialization error: {e}")
             logger.warning("Continuing without database - some features may not work")
-        
-        # Инициализация Redis
+
         redis_url = os.getenv("REDIS_URL")
         if redis_url:
             try:
@@ -70,20 +67,20 @@ async def lifespan(app: FastAPI):
                 await redis_client.ping()
                 cache = Cache(Cache.REDIS, endpoint=redis_client, serializer=JsonSerializer())
                 app.state.cache = cache
-                logger.info("✅ Redis cache initialized successfully")
+                logger.info("Redis cache initialized successfully")
             except Exception as e:
-                logger.error(f"❌ Failed to connect to Redis: {e}")
+                logger.error(f"Failed to connect to Redis: {e}")
                 cache = None
                 app.state.cache = None
         else:
-            logger.warning("⚠️ REDIS_URL not set, cache disabled")
+            logger.warning("REDIS_URL not set, cache disabled")
             cache = None
             app.state.cache = None
         
         yield
         
     except Exception as e:
-        logger.error(f"💥 Error during startup: {e}")
+        logger.error(f"Error during startup: {e}")
         yield
     finally:
         if scheduler.running:
@@ -155,7 +152,6 @@ async def debug_env():
     for key in os.environ.keys():
         if 'SECRET' in key or 'DATABASE' in key or 'REDIS' in key:
             value = os.environ[key]
-            # Маскируем чувствительные данные
             if 'postgresql://' in value and '@' in value:
                 parts = value.split('@')
                 credentials = parts[0].split('://')[1].split(':')
