@@ -20,11 +20,6 @@ from ..routers.auth import get_current_user
 from ..tasks import increment_click_count
 from ..database import is_db_connected
 
-if not is_db_connected():
-    raise HTTPException(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail="Database is not available"
-    )
 
 router = APIRouter(prefix="/links", tags=["links"])
 logger = logging.getLogger(__name__)
@@ -34,12 +29,22 @@ def generate_short_code(length: int = 6) -> str:
     chars = string.ascii_letters + string.digits
     return ''.join(random.choice(chars) for _ in range(length))
 
+def check_db_connection():
+    """Проверка подключения к БД перед выполнением операций"""
+    if not is_db_connected():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database is not available. Please try again later."
+        )
+
 @router.get("/search", response_model=list[LinkResponse])
 async def search_by_original_url(
     original_url: str = Query(..., description="Original URL to search"),
     db: Session = Depends(get_db)
 ):
     """Поиск ссылок по оригинальному URL"""
+    check_db_connection()
+    
     decoded_url = urllib.parse.unquote(original_url)
     
     logger.info(f"Searching for URL: {original_url}")
@@ -54,10 +59,6 @@ async def search_by_original_url(
     
     logger.info(f"Found {len(links)} links")
     
-    if not links:
-        all_links = db.query(Link).filter(Link.is_active == True).all()
-        logger.info(f"All active links in DB: {[l.original_url for l in all_links]}")
-    
     return links
 
 @router.post("/shorten", response_model=LinkResponse)
@@ -67,6 +68,8 @@ async def create_short_link(
     current_user: Optional[User] = Depends(get_current_user)
 ):
     """Создание короткой ссылки"""
+    check_db_connection()
+    
     if link_data.custom_alias:
         existing = db.query(Link).filter(
             or_(
@@ -113,6 +116,8 @@ async def redirect_to_url(
     db: Session = Depends(get_db)
 ):
     """Перенаправление на оригинальный URL"""
+    check_db_connection()
+    
     link = db.query(Link).filter(
         or_(Link.short_code == short_code, Link.custom_alias == short_code),
         Link.is_active == True
@@ -147,6 +152,8 @@ async def delete_link(
     current_user: User = Depends(get_current_user)
 ):
     """Удаление ссылки (только для авторизованных пользователей)"""
+    check_db_connection()
+    
     link = db.query(Link).filter(
         or_(Link.short_code == short_code, Link.custom_alias == short_code)
     ).first()
@@ -182,6 +189,8 @@ async def update_link(
     current_user: User = Depends(get_current_user)
 ):
     """Обновление URL для короткой ссылки"""
+    check_db_connection()
+    
     link = db.query(Link).filter(
         or_(Link.short_code == short_code, Link.custom_alias == short_code)
     ).first()
@@ -217,6 +226,8 @@ async def get_link_stats(
     db: Session = Depends(get_db)
 ):
     """Статистика по ссылке"""
+    check_db_connection()
+    
     link = db.query(Link).filter(
         or_(Link.short_code == short_code, Link.custom_alias == short_code)
     ).first()
@@ -227,7 +238,7 @@ async def get_link_stats(
             detail="Link not found"
         )
 
-    base_url = "http://localhost:8000"
+    base_url = os.getenv("BASE_URL", "http://localhost:8000")
     short_url = f"{base_url}/{link.short_code}"
 
     stats_data = {

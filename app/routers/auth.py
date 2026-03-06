@@ -12,19 +12,16 @@ from ..models import User
 from ..schemas import UserCreate, UserResponse, Token
 from ..database import is_db_connected
 
-if not is_db_connected():
-    raise HTTPException(
-        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail="Database is not available"
-    )
-
 
 SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise ValueError("SECRET_KEY environment variable is not set")
+
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
 
 router = APIRouter(tags=["authentication"])
 
@@ -56,6 +53,10 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    
+    if not token:
+        raise credentials_exception
+    
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
@@ -63,6 +64,14 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
             raise credentials_exception
     except JWTError:
         raise credentials_exception
+    
+    # Проверяем подключение к БД
+    if not is_db_connected():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database is not available"
+        )
+    
     user = db.query(User).filter(User.username == username).first()
     if user is None:
         raise credentials_exception
@@ -71,6 +80,13 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
 @router.post("/register", response_model=UserResponse)
 async def register(user_data: UserCreate, db: Session = Depends(get_db)):
     """Регистрация нового пользователя"""
+    # Проверяем подключение к БД
+    if not is_db_connected():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database is not available. Please try again later."
+        )
+    
     existing_user = db.query(User).filter(
         (User.email == user_data.email) | (User.username == user_data.username)
     ).first()
@@ -97,6 +113,13 @@ async def register(user_data: UserCreate, db: Session = Depends(get_db)):
 @router.post("/token", response_model=Token)
 async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     """Получение токена доступа"""
+    # Проверяем подключение к БД
+    if not is_db_connected():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database is not available. Please try again later."
+        )
+    
     user = authenticate_user(db, form_data.username, form_data.password)
     if not user:
         raise HTTPException(
